@@ -41,6 +41,8 @@ metadata:
   namespace: phoenix-system-2
 spec:
   replicas: 1
+  strategy:
+    type: Recreate   
   selector:
     matchLabels:
       app: phoenix-gatekeeper
@@ -48,8 +50,6 @@ spec:
     metadata:
       labels:
         app: phoenix-gatekeeper
-    strategy:
-      type: Recreate 
     spec:
       initContainers:
       - name: init-check-db
@@ -65,7 +65,7 @@ spec:
         - containerPort: 8000
         startupProbe:
           exec:
-            command: ["verify-payload.sh"]
+            command: ["ls", "/app/main.py"]
           failureThreshold: 30
           periodSeconds: 5
         livenessProbe:
