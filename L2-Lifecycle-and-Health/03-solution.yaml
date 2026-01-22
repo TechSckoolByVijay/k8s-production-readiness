@@ -48,6 +48,8 @@ spec:
     metadata:
       labels:
         app: phoenix-gatekeeper
+    strategy:
+      type: Recreate
     spec:
       # --- STAGE 1: THE INIT BARRIER FIXED ---
       initContainers:

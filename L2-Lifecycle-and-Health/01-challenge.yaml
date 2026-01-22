@@ -48,12 +48,13 @@ spec:
     metadata:
       labels:
         app: phoenix-gatekeeper
+    strategy:
+      type: Recreate 
     spec:
       initContainers:
       - name: init-check-db
         image: busybox:1.28
-        command: ['sh', '-c', "until nslookup db-backend-prod; do echo 'WAITING FOR DB...'; sleep 2; done"]
-
+        command: ['sh', '-c', "until nslookup google.com; do echo 'WAITING FOR DB...'; sleep 2; done"]
       containers:
       - name: phoenix-server
         image: python:3.11-slim
