@@ -1,0 +1,168 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: phoenix-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: phoenix-app-code
+  namespace: phoenix-system
+data:
+  main.py: |
+    import os
+    from fastapi import FastAPI, Request
+    from fastapi.responses import HTMLResponse
+
+    app = FastAPI()
+
+    @app.get("/", response_class=HTMLResponse)
+    async def root(request: Request):
+        # Env Config
+        company = os.getenv("COMPANY_NAME", "PHOENIX OPERATIONS")
+        status = os.getenv("STATUS_MSG", "SYSTEMS NOMINAL")
+        color = os.getenv("THEME_COLOR", "#00ffcc")
+        
+        # Kubernetes Downward API Details (The "Smart" Values)
+        pod_name = os.getenv("K8S_POD_NAME", "LOCAL-DEV-POD")
+        node_name = os.getenv("K8S_NODE_NAME", "AKS-NODE-POOL-01")
+        pod_ip = os.getenv("K8S_POD_IP", "10.244.0.0")
+        client_ip = request.client.host # Grab student's IP
+        
+        intel_msg = "Critical: Intelligence File Not Found"
+        if os.path.exists("/app/data/announcement.txt"):
+            with open("/app/data/announcement.txt", "r") as f:
+                intel_msg = f.read()
+
+        return f"""
+        <html>
+            <head>
+                <style>
+                    body {{ background: #05050a; color: {color}; font-family: 'Courier New', monospace; text-align: center; padding: 50px; }}
+                    .dashboard {{ border: 4px double {color}; display: inline-block; padding: 40px; border-radius: 5px; box-shadow: 0 0 30px {color}; }}
+                    .status-bar {{ font-size: 18px; background: {color}; color: #000; font-weight: bold; padding: 5px; margin: 15px 0; }}
+                    .intel {{ color: #aaa; border: 1px dashed #444; padding: 10px; font-size: 13px; }}
+                    .diag {{ text-align: left; font-size: 12px; color: {color}; opacity: 0.8; margin-top: 20px; border-top: 1px solid #333; padding-top: 10px; }}
+                    .blink {{ animation: blinker 1s linear infinite; }}
+                    @keyframes blinker {{ 50% {{ opacity: 0; }} }}
+                </style>
+            </head>
+            <body>
+                <div class="dashboard">
+                    <div style="font-size: 12px;">[ SECURE TERMINAL ]</div>
+                    <h1>{company}</h1>
+                    <div class="status-bar">{status}</div>
+                    <div class="intel">ENCRYPTED DATA: {intel_msg}</div>
+                    
+                    <div class="diag">
+                        <strong>INFRASTRUCTURE INSIGHTS:</strong><br>
+                        > K8S_POD_NAME: <span style="color:#fff">{pod_name}</span><br>
+                        > K8S_NODE_NAME: <span style="color:#fff">{node_name}</span><br>
+                        > INTERNAL_POD_IP: <span style="color:#fff">{pod_ip}</span><br>
+                        > YOUR_VISITOR_IP: <span style="color:#fff">{client_ip}</span><br>
+                        > SYSTEM SCANNING... COMPLETE
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+    
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: phoenix-config
+  namespace: phoenix-system
+data:
+  COMPANY_NAME: "PHOENIX OPERATIONS"
+  STATUS_MSG: "SYSTEMS NOMINAL"
+  THEME_COLOR: "#00ffcc"
+  news: "Azure Region: East US Active" 
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: phoenix-service
+  namespace: phoenix-system
+spec:
+  type: LoadBalancer
+  selector:
+    app: phoenix-app
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phoenix-deployment
+  namespace: phoenix-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: phoenix-app
+  template:
+    metadata:
+      labels:
+        app: phoenix-app
+    spec:
+      containers:
+      - name: phoenix-server
+        image: python:3.11-slim
+        workingDir: /app
+        command: ["/bin/sh", "-c"]
+        # FIXED: uvicorn looks for main:app because we mount to main.py
+        args: ["pip install fastapi uvicorn && uvicorn main:app --host 0.0.0.0 --port 8000"]
+        env:
+        - name: COMPANY_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: phoenix-config
+              key: COMPANY_NAME
+        - name: STATUS_MSG
+          valueFrom:
+            configMapKeyRef:
+              name: phoenix-config
+              key: STATUS_MSG
+        - name: THEME_COLOR
+          valueFrom:
+            configMapKeyRef:
+              name: phoenix-config
+              key: THEME_COLOR
+        # DYNAMIC VALUES (Downward API)
+        - name: K8S_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: K8S_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: K8S_POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        volumeMounts:
+        - name: code-vol
+          mountPath: /app
+        - name: data-vol
+          mountPath: /app/data
+        resources:
+          requests:
+            cpu: "100m" # Corrected from 25 to 100m (millicores)
+            memory: "128Mi"
+      volumes:
+      - name: code-vol
+        configMap:
+          name: phoenix-app-code        
+      - name: data-vol
+        configMap:
+          name: phoenix-config
+          items:
+          - key: news
+            path: "announcement.txt"

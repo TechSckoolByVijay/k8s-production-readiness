@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: phoenix-system-3
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: phoenix-app-code-v3
+  namespace: phoenix-system-3
+data:
+  main.py: |
+    from fastapi import FastAPI
+    import os
+    app = FastAPI()
+    @app.get("/")
+    async def root():
+        # The app tries to list pods to show 'Infrastructure Awareness'
+        # If it lacks permissions, the API returns a 403 Forbidden
+        return {
+            "status": "ONLINE",
+            "identity": os.getenv("K8S_SA", "Unknown"),
+            "api_access": "403 FORBIDDEN - Identity cannot LIST pods in namespace",
+            "fix": "Create ServiceAccount, Role, and RoleBinding to unlock."
+        }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phoenix-deployment
+  namespace: phoenix-system-3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: phoenix-fortress
+  template:
+    metadata:
+      labels:
+        app: phoenix-fortress
+    spec:
+      # ERROR 1: THE IDENTITY GHOST
+      # Problem: The deployment claims to be 'phoenix-admin', but that SA doesn't exist.
+      # Detection: Pod stays in 'Pending'. Describe says "ServiceAccount phoenix-admin not found".
+      # FIX: The student must create the ServiceAccount 'phoenix-admin'.
+      serviceAccountName: phoenix-admin
+
+      securityContext:
+        runAsUser: 1001
+        fsGroup: 2000
+
+      containers:
+      - name: phoenix-server
+        image: python:3.11-slim
+        workingDir: /app
+        command: ["/bin/sh", "-c"]
+        args: ["pip install fastapi uvicorn && uvicorn main:app --host 0.0.0.0 --port 8000"]
+        resources:
+          limits:
+            # ERROR 2: THE RESOURCE CHOKE (Muscle Memory)
+            # Problem: Memory limit is too low for Python startup.
+            # Detection: Pod shows 'OOMKilled'.
+            # FIX: Increase memory to 128Mi.
+            memory: "12Mi"
+        volumeMounts:
+        - name: code-vol
+          mountPath: /app
+          # ERROR 3: THE READ-ONLY TRAP (Muscle Memory)
+          # Problem: App cannot write temp files/logs.
+          # Detection: Logs show "Read-only file system".
+          # FIX: Set readOnly to false.
+          readOnly: true
+      volumes:
+      - name: code-vol
+        configMap:
+          name: phoenix-app-code-v3
+---
+# ERROR 4: THE PERMISSION GAP (RBAC)
+# Problem: Even after creating the ServiceAccount, the App UI will still say "403 Forbidden".
+# Detection: App loads but "api_access" is "DENIED".
+# FIX: Students must manually write and apply a Role and RoleBinding.
