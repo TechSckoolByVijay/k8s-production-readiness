@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: phoenix-system-2
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: phoenix-app-code-v2
+  namespace: phoenix-system-2
+data:
+  main.py: |
+    from fastapi import FastAPI
+    import time
+    app = FastAPI()
+    @app.get("/")
+    async def root():
+        return {"message": "MISSION ACCOMPLISHED: PHOENIX GATEKEEPER IS ONLINE"}
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: phoenix-service
+  namespace: phoenix-system-2
+spec:
+  type: LoadBalancer
+  selector:
+    app: phoenix-gatekeeper
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phoenix-deployment
+  namespace: phoenix-system-2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: phoenix-gatekeeper
+  template:
+    metadata:
+      labels:
+        app: phoenix-gatekeeper
+    spec:
+      # --- STAGE 1: THE INIT BARRIER FIXED ---
+      initContainers:
+      - name: init-check-db
+        image: busybox:1.28
+        # FIX: Replaced non-existent internal DB with a reliable external check
+        command: ['sh', '-c', "until nslookup google.com; do echo 'WAITING FOR NETWORK...'; sleep 2; done"]
+
+      containers:
+      - name: phoenix-server
+        image: python:3.11-slim
+        workingDir: /app
+        command: ["/bin/sh", "-c"]
+        args: ["pip install fastapi uvicorn && uvicorn main:app --host 0.0.0.0 --port 8000"]
+        ports:
+        - containerPort: 8000
+        
+        # --- STAGE 2: STARTUP PROTOCOL FIXED ---
+        # FIX: Changed command to check for the actual application file
+        startupProbe:
+          exec:
+            command: ["ls", "/app/main.py"]
+          failureThreshold: 30
+          periodSeconds: 5
+
+        # --- STAGE 3: THE LIVENESS LOOP FIXED ---
+        # FIX: Increased initialDelaySeconds to 30 to allow 'pip install' to finish
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+        # --- STAGE 4: THE READINESS GATE FIXED ---
+        # FIX 1: Corrected port from 8080 to 8000
+        # FIX 2: Reduced successThreshold to 1 for faster traffic cut-over
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          successThreshold: 1
+          periodSeconds: 5
