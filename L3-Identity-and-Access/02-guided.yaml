@@ -3,6 +3,18 @@ kind: Namespace
 metadata:
   name: phoenix-system-3
 ---
+# ERROR 1: THE IDENTITY GHOST (ServiceAccount Missing)
+# REASONING: The Deployment below references 'phoenix-admin'. 
+# If this resource is commented out, the Pod will stay in 'Pending' status.
+# K8s will say: "ServiceAccount phoenix-admin not found".
+# FIX: Uncomment the ServiceAccount block below.
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: phoenix-admin
+  namespace: phoenix-system-3
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,18 +23,19 @@ metadata:
 data:
   main.py: |
     from fastapi import FastAPI
+    from kubernetes import client, config
     import os
     app = FastAPI()
     @app.get("/")
     async def root():
-        # The app tries to list pods to show 'Infrastructure Awareness'
-        # If it lacks permissions, the API returns a 403 Forbidden
-        return {
-            "status": "ONLINE",
-            "identity": os.getenv("K8S_SA", "Unknown"),
-            "api_access": "403 FORBIDDEN - Identity cannot LIST pods in namespace",
-            "fix": "Create ServiceAccount, Role, and RoleBinding to unlock."
-        }
+        try:
+            config.load_incluster_config()
+            v1 = client.CoreV1Api()
+            namespace = os.getenv("POD_NAMESPACE", "phoenix-system-3")
+            pods = v1.list_namespaced_pod(namespace=namespace)
+            return {"status": "ONLINE", "api_access": "GRANTED", "total_pods": len(pods.items)}
+        except Exception as e:
+            return {"status": "ONLINE", "api_access": "DENIED", "error": str(e)}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -41,43 +54,75 @@ spec:
       labels:
         app: phoenix-fortress
     spec:
-      # ERROR 1: THE IDENTITY GHOST
-      # Problem: The deployment claims to be 'phoenix-admin', but that SA doesn't exist.
-      # Detection: Pod stays in 'Pending'. Describe says "ServiceAccount phoenix-admin not found".
-      # FIX: The student must create the ServiceAccount 'phoenix-admin'.
       serviceAccountName: phoenix-admin
-
       securityContext:
-        runAsUser: 1001
+        runAsUser: 0
         fsGroup: 2000
-
       containers:
       - name: phoenix-server
         image: python:3.11-slim
         workingDir: /app
         command: ["/bin/sh", "-c"]
-        args: ["pip install fastapi uvicorn && uvicorn main:app --host 0.0.0.0 --port 8000"]
+        args: ["pip install fastapi uvicorn kubernetes && uvicorn main:app --host 0.0.0.0 --port 8000"]
         resources:
           limits:
-            # ERROR 2: THE RESOURCE CHOKE (Muscle Memory)
-            # Problem: Memory limit is too low for Python startup.
-            # Detection: Pod shows 'OOMKilled'.
-            # FIX: Increase memory to 128Mi.
-            memory: "12Mi"
+            # ERROR 2: THE RESOURCE CHOKE (Memory too low)
+            # REASONING: Python requires significant RAM during 'pip install'. 
+            # 50Mi is insufficient for the 'kubernetes' library installation.
+            # RESULT: Pod status flips to 'OOMKilled'.
+            # FIX: Increase memory to "600Mi".
+            memory: "50Mi" 
         volumeMounts:
         - name: code-vol
           mountPath: /app
-          # ERROR 3: THE READ-ONLY TRAP (Muscle Memory)
-          # Problem: App cannot write temp files/logs.
-          # Detection: Logs show "Read-only file system".
-          # FIX: Set readOnly to false.
           readOnly: true
       volumes:
       - name: code-vol
         configMap:
           name: phoenix-app-code-v3
 ---
-# ERROR 4: THE PERMISSION GAP (RBAC)
-# Problem: Even after creating the ServiceAccount, the App UI will still say "403 Forbidden".
-# Detection: App loads but "api_access" is "DENIED".
-# FIX: Students must manually write and apply a Role and RoleBinding.
+apiVersion: v1
+kind: Service
+metadata:
+  name: phoenix-service
+  namespace: phoenix-system-3
+spec:
+  type: LoadBalancer
+  selector:
+    app: phoenix-fortress
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-lister
+  namespace: phoenix-system-3
+rules:
+- apiGroups: [""]
+  # ERROR 3: THE PERMISSION GAP (Incorrect Resource)
+  # REASONING: The app code calls 'list_namespaced_pod'. 
+  # Granting access to 'services' will result in a 403 Forbidden error in the App UI.
+  # RESULT: App loads, but says "api_access: DENIED".
+  # FIX: Change "services" to "pods".
+  resources: ["pods"] 
+  verbs: ["list", "get"]
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: phoenix-rbac-link
+  namespace: phoenix-system-3
+subjects:
+- kind: ServiceAccount
+  name: phoenix-admin
+  namespace: phoenix-system-3
+roleRef:
+  kind: Role
+  name: pod-lister
+  apiGroup: rbac.authorization.k8s.io
