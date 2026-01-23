@@ -63,21 +63,31 @@ spec:
         args: ["pip install fastapi uvicorn && uvicorn main:app --host 0.0.0.0 --port 8000"]
         ports:
         - containerPort: 8000
+
         startupProbe:
           exec:
             command: ["ls", "/app/main.py"]
           failureThreshold: 30
           periodSeconds: 5
+
         livenessProbe:
           httpGet:
             path: /health
             port: 8000
-          initialDelaySeconds: 1
-          periodSeconds: 2
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
         readinessProbe:
           httpGet:
             path: /health
-            port: 8080
+            port: 8000
           initialDelaySeconds: 5
-          successThreshold: 10
+          successThreshold: 1
           periodSeconds: 5
+        volumeMounts:
+        - name: code-vol
+          mountPath: /app
+      volumes:
+      - name: code-vol
+        configMap:
+          name: phoenix-app-code-v2

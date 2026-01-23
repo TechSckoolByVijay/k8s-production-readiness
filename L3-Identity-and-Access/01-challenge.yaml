@@ -31,6 +31,8 @@ metadata:
   namespace: phoenix-system-3
 spec:
   replicas: 1
+  strategy:
+    type: Recreate     
   selector:
     matchLabels:
       app: phoenix-fortress
@@ -40,11 +42,9 @@ spec:
         app: phoenix-fortress
     spec:
       serviceAccountName: phoenix-admin
-
       securityContext:
         runAsUser: 1001
         fsGroup: 2000
-
       containers:
       - name: phoenix-server
         image: python:3.11-slim
