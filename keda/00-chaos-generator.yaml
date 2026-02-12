@@ -1,0 +1,138 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: generator-code
+data:
+  main.py: |
+    from fastapi import FastAPI, Form
+    from fastapi.responses import HTMLResponse
+    from azure.servicebus import ServiceBusClient, ServiceBusMessage
+    import os
+
+    app = FastAPI()
+    CONN_STR = os.getenv("SB_CONN_STR")
+    QUEUE = "orders"
+
+    @app.get("/", response_class=HTMLResponse)
+    async def index():
+        return """
+        <html>
+            <head>
+                <title>KEDA CHAOS ROOM</title>
+                <style>
+                    body { background: #0d1117; color: #39ff14; font-family: 'Courier New'; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+                    .box { border: 2px dashed #39ff14; padding: 40px; border-radius: 15px; text-align: center; box-shadow: 0 0 20px #39ff14; background: rgba(0,0,0,0.5); }
+                    h1 { font-size: 28px; letter-spacing: 2px; margin-bottom: 30px; }
+                    input { background: #000; color: #39ff14; border: 1px solid #39ff14; padding: 15px; font-size: 24px; width: 150px; text-align: center; outline: none; margin-bottom: 20px; }
+                    button { background: #39ff14; color: #000; border: none; padding: 15px 40px; font-size: 22px; cursor: pointer; font-weight: bold; transition: 0.3s; text-transform: uppercase; }
+                    button:hover { background: #fff; box-shadow: 0 0 30px #fff; }
+                    button:disabled { background: #555; cursor: not-allowed; box-shadow: none; }
+                    #status { margin-top: 25px; font-weight: bold; min-height: 24px; color: #fff; text-shadow: 0 0 10px #39ff14; }
+                    .icon { font-size: 40px; margin-bottom: 10px; display: block; }
+                </style>
+            </head>
+            <body>
+                <div class="box">
+                    <span class="icon">🍕</span>
+                    <h1>KEDA ORDER GENERATOR</h1>
+                    <input type="number" id="count" value="1000">
+                    <br>
+                    <button id="btn" onclick="sendOrders()">Send Orders</button>
+                    <div id="status">Ready to flood the kitchen...</div>
+                </div>
+
+                <script>
+                    async function sendOrders() {
+                        const btn = document.getElementById('btn');
+                        const status = document.getElementById('status');
+                        const count = document.getElementById('count').value;
+                        
+                        btn.disabled = true;
+                        status.innerText = "🚀 INJECTING " + count + " ORDERS...";
+                        status.style.color = "#39ff14";
+
+                        try {
+                            const formData = new FormData();
+                            formData.append('count', count);
+
+                            const response = await fetch('/generate', {
+                                method: 'POST',
+                                body: formData
+                            });
+
+                            if (response.ok) {
+                                status.innerText = "🔥 BOOM! " + count + " ORDERS SENT!";
+                            } else {
+                                status.innerText = "❌ ERROR: KITCHEN ON FIRE!";
+                                status.style.color = "red";
+                            }
+                        } catch (err) {
+                            status.innerText = "❌ FAILED TO REACH KITCHEN!";
+                            status.style.color = "red";
+                        } finally {
+                            btn.disabled = false;
+                        }
+                    }
+                </script>
+            </body>
+        </html>
+        """
+
+    @app.post("/generate")
+    async def generate(count: int = Form(...)):
+        try:
+            with ServiceBusClient.from_connection_string(CONN_STR) as client:
+                with client.get_queue_sender(QUEUE) as sender:
+                    messages = [ServiceBusMessage(f"Order-{i}") for i in range(count)]
+                    sender.send_messages(messages)
+            return {"status": "success"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chaos-generator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chaos-generator
+  template:
+    metadata:
+      labels:
+        app: chaos-generator
+    spec:
+      containers:
+      - name: generator
+        image: python:3.9-slim
+        command: ["/bin/sh", "-c"]
+        args: ["pip install fastapi uvicorn azure-servicebus python-multipart && uvicorn main:app --host 0.0.0.0 --port 80"]
+        workingDir: /app
+        env:
+        - name: SB_CONN_STR
+          value: "Endpoint=sb://asbvijay9784***"
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: code-volume
+          mountPath: /app/main.py
+          subPath: main.py
+      volumes:
+      - name: code-volume
+        configMap:
+          name: generator-code
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: chaos-service
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    app: chaos-generator

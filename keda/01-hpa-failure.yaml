@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lazy-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lazy-worker
+  template:
+    metadata:
+      labels:
+        app: lazy-worker
+    spec:
+      containers:
+      - name: worker
+        image: python:3.9-slim
+        command: ["/bin/sh", "-c"]
+        # Updated logs to match the Pizza Shop analogy
+        args: 
+          - |
+            pip install azure-servicebus && \
+            python -c '
+            import time, os
+            from azure.servicebus import ServiceBusClient
+            conn_str = os.getenv("SB_CONN_STR")
+            client = ServiceBusClient.from_connection_string(conn_str)
+            receiver = client.get_queue_receiver("orders")
+            print("Chef is in the kitchen, waiting for orders...")
+            for msg in receiver:
+                print(f"Chef is cooking pizza for order: {msg}")
+                receiver.complete_message(msg)
+                time.sleep(5) # Simulate slow cooking / low CPU usage
+            '
+        env:
+        - name: SB_CONN_STR
+          value: "Endpoint=sb://asbvijay97***"
+        resources:
+          requests:
+            cpu: "10m"
+            memory: "64Mi"
+          limits:
+            cpu: "50m"
+            memory: "128Mi"
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: worker-hpa-failure
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: lazy-worker
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50

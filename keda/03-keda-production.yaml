@@ -1,0 +1,48 @@
+# 1. THE VAULT: This holds the sensitive data
+apiVersion: v1
+kind: Secret
+metadata:
+  name: worker-secrets
+  namespace: default
+type: Opaque
+stringData:
+  # KEDA will look for this key
+  SB_CONN_STR: "Endpoint=sb://asbvijay9784.****"
+
+---
+
+# 2. THE PASSPORT: This maps the Secret to KEDA
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-az-auth
+  namespace: default
+spec:
+  secretTargetRef:
+  - parameter: connection    # Internal KEDA parameter name for Service Bus
+    name: worker-secrets      # Must match the Secret name above
+    key: SB_CONN_STR          # Must match the Key inside the Secret
+
+---
+
+# 3. THE BRAIN: The ScaledObject using the Auth
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker-scaler
+  namespace: default
+spec:
+  scaleTargetRef:
+    name: lazy-worker
+  minReplicaCount: 0
+  maxReplicaCount: 20
+  pollingInterval: 15
+  cooldownPeriod: 60
+  triggers:
+  - type: azure-servicebus
+    metadata:
+      queueName: orders
+      messageCount: "5"
+    # We no longer use connectionFromEnv here
+    authenticationRef:
+      name: keda-az-auth

@@ -1,0 +1,22 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker-scaler
+  namespace: default
+spec:
+  scaleTargetRef:
+    name: lazy-worker      # Must match the name of your Deployment
+  minReplicaCount: 0       # Scale to zero when queue is empty (Money Saver)
+  maxReplicaCount: 20      # Safety cap to prevent infra blowout
+  pollingInterval: 15      # How often KEDA checks the queue (seconds)
+  cooldownPeriod:  60      # How long to wait before scaling back to 0 (seconds)
+  triggers:
+  - type: azure-servicebus
+    metadata:
+      # KEDA looks at this queue to decide when to scale
+      queueName: orders
+      # THE RULE: 1 Pod for every 5 messages. 
+      # 100 messages = 20 pods.
+      messageCount: "5"
+      # Using the connection string directly for the demo
+      connectionFromEnv: SB_CONN_STR
