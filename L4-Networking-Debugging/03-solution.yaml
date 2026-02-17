@@ -1,0 +1,208 @@
+# ========================== Namespaces ==========================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: blackhole-app
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: blackhole-db
+---
+# ========================== ConfigMap: Application Code ====================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-code
+  namespace: blackhole-app
+data:
+  app.py: |
+    import os
+    import psycopg2
+    from fastapi import FastAPI
+    from fastapi.responses import HTMLResponse
+
+    app = FastAPI()
+
+    DB_HOST = os.getenv("DB_HOST")
+    DB_USER = os.getenv("DB_USER", "postgres")
+    DB_PASSWORD = os.getenv("DB_PASSWORD", "example")
+    DB_NAME = os.getenv("DB_NAME", "postgres")
+
+    def db_status():
+        try:
+            conn = psycopg2.connect(
+                host=DB_HOST,
+                user=DB_USER,
+                password=DB_PASSWORD,
+                dbname=DB_NAME,
+                connect_timeout=3
+            )
+            conn.close()
+            return True, "Database Connected"
+        except Exception as e:
+            return False, str(e)
+
+    @app.get("/", response_class=HTMLResponse)
+    def home():
+        ok, msg = db_status()
+        status = "CONNECTED" if ok else "NOT CONNECTED"
+        color = "#22c55e" if ok else "#ef4444"
+        print(f"[DB STATUS] {status} - {msg}")
+
+        return f"""
+        <html>
+          <head>
+            <title>Kubernetes Connectivity Demo</title>
+            <style>
+              body {{
+                margin: 0;
+                height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: linear-gradient(135deg, #0f172a, #020617);
+                font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif;
+                color: #e5e7eb;
+              }}
+              .card {{
+                background-color: #020617;
+                border-radius: 16px;
+                padding: 40px;
+                width: 420px;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+                text-align: center;
+                border: 1px solid #1e293b;
+              }}
+              .title {{
+                font-size: 22px;
+                margin-bottom: 24px;
+                color: #f8fafc;
+              }}
+              .status {{
+                background-color: {color};
+                padding: 20px;
+                border-radius: 12px;
+                color: white;
+                font-size: 18px;
+                font-weight: 600;
+                margin-bottom: 16px;
+              }}
+              .details {{
+                font-size: 13px;
+                color: #94a3b8;
+                word-break: break-all;
+              }}
+              .footer {{
+                margin-top: 20px;
+                font-size: 12px;
+                color: #64748b;
+              }}
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <div class="title">Kubernetes Connectivity Demo</div>
+              <div class="status">{status}</div>
+              <div class="details">{msg}</div>
+              <div class="footer">DB Host: {DB_HOST}</div>
+            </div>
+          </body>
+        </html>
+        """
+---
+# ========================== Database ==========================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db-backend
+  namespace: blackhole-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: database
+  template:
+    metadata:
+      labels:
+        app: database
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_PASSWORD
+          value: example
+        args: ["postgres", "-c", "listen_addresses=*"]
+        volumeMounts:
+        - name: pgdata
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: pgdata
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-backend
+  namespace: blackhole-db
+spec:
+  selector:
+    app: database
+  ports:
+  - port: 5432
+    targetPort: 5432
+---
+# ========================== Application ==========================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-backend
+  namespace: blackhole-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app-backend
+  template:
+    metadata:
+      labels:
+        app: app-backend
+    spec:
+      containers:
+      - name: app
+        image: python:3.11-slim
+        workingDir: /app
+        ports:
+        - containerPort: 8000
+        env:
+        - name: DB_HOST
+          value: "db-backend.blackhole-db"
+        volumeMounts:
+        - name: app-code
+          mountPath: /app
+        command:
+        - sh
+        - -c
+        - |
+          pip install fastapi uvicorn psycopg2-binary &&
+          uvicorn app:app --host 0.0.0.0 --port 8000
+      volumes:
+      - name: app-code
+        configMap:
+          name: app-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-backend
+  namespace: blackhole-app
+spec:
+  type: LoadBalancer
+  selector:
+    app: app-backend
+  ports:
+  - port: 80
+    targetPort: 8000

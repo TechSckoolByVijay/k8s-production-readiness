@@ -25,7 +25,9 @@ data:
     from fastapi import FastAPI
     from kubernetes import client, config
     import os
+
     app = FastAPI()
+
     @app.get("/")
     async def root():
         try:
@@ -33,9 +35,33 @@ data:
             v1 = client.CoreV1Api()
             namespace = os.getenv("POD_NAMESPACE", "phoenix-system-3")
             pods = v1.list_namespaced_pod(namespace=namespace)
-            return {"status": "ONLINE", "api_access": "GRANTED", "total_pods": len(pods.items)}
+
+            pod_list = []
+            for pod in pods.items:
+                pod_list.append({
+                    "name": pod.metadata.name,
+                    "namespace": pod.metadata.namespace,
+                    "status": pod.status.phase,
+                    "pod_ip": pod.status.pod_ip,
+                    "node": pod.spec.node_name
+                })
+
+            return {
+                "status": "ONLINE",
+                "identity": os.getenv("HOSTNAME", "Unknown"),
+                "namespace": namespace,
+                "api_access": "GRANTED",
+                "total_pods": len(pods.items),
+                "pods": pod_list
+            }
+
         except Exception as e:
-            return {"status": "ONLINE", "api_access": "DENIED", "error": str(e)}
+            return {
+                "status": "ONLINE",
+                "identity": os.getenv("HOSTNAME", "Unknown"),
+                "api_access": "DENIED",
+                "error": str(e)
+            }
 ---
 apiVersion: apps/v1
 kind: Deployment
